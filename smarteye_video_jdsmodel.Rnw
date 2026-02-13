@@ -1,0 +1,1757 @@
+\documentclass[a4paper, 11pt]{article}
+
+\usepackage{graphicx,hyperref,amsmath,natbib,bm,url,microtype,todonotes}
+\usepackage[australian]{babel}
+\usepackage[a4paper,text={16.5cm,24cm},centering]{geometry}
+\usepackage[compact,small]{titlesec}
+\setlength{\parskip}{1.2ex}
+\setlength{\parindent}{0em}
+\clubpenalty = 10000
+\widowpenalty = 10000
+\usepackage{kpfonts}
+\usepackage[T1]{fontenc}
+\usepackage{fancyhdr}
+\usepackage{paralist}
+\usepackage{color,booktabs}
+\usepackage{setspace}
+\pagestyle{fancy}
+\usepackage{longtable}
+\usepackage{caption} % caption for rotating table
+\usepackage{rotating} %rotating table
+\usepackage{graphics}
+\graphicspath{{figure_extra/}}
+
+\usepackage{xcolor}
+\hypersetup{
+    colorlinks,
+    linkcolor={red!50!black},
+    citecolor={blue!50!black},
+    urlcolor={blue!80!black}
+}
+
+
+\begin{document}
+%\SweaveOpts{concordance=TRUE}
+
+
+\title{A new JDS model for SmartEye }
+\author{Dr. Yeasmin Khadakar}
+
+\onehalfspacing
+
+\maketitle
+\date
+
+
+
+<<option1, cache=TRUE, echo=FALSE>>=
+options(scipen=9999)
+@
+
+
+<<loadpackages, echo=FALSE, cache = TRUE, message=FALSE, warning=FALSE>>=
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(grid))
+suppressPackageStartupMessages(library(reshape2)) 
+suppressPackageStartupMessages(library(corrplot))
+suppressPackageStartupMessages(library(Hmisc))
+suppressPackageStartupMessages(library(rms))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(xtable))
+
+suppressPackageStartupMessages(library(rms))
+
+@
+
+
+
+<<loadsourcefile, echo=FALSE, cache=TRUE, message=FALSE, warning=FALSE>>=
+# load functions for combining data files 
+source(paste(Sys.getenv("OPTALERT_RCODE_PATH"),"Recordings_functions.R", sep="/"))
+
+@
+
+
+
+% In this report I plot Velocity vs Amplitude for each device, 
+% (1) real sense, (2) real sense+ visage, (3) Smart eye, (4) smart eye+ visage (when ready)
+% According to Murray, the high correlation in linear relationship between amplitude & velocity is the prime 
+% determinant of the JDS algorithm. 
+
+% The subjects recorded using real sense are different from the subjects recorded by smart eye.
+
+% Two files needed to subset to get the amplitude and velocity for the blinks
+% file name : "..blinks", In "blinks" gives information on TRUE blinks only
+% record start+2 = starting row number; end+2 = end row number
+ 
+% subset "time domain" file using starting row numbers & ending row numbers 
+% Plot S_smoothed EM = Amplitude & S_Velocity = velocity
+
+
+\section{Introduction}
+
+The linear relationship between amplitude and velocity is the backbone of the JDS algorithm. The measurement obtained from glasses usually hold this relaitonship but measurements from other devices, like Smart Eye and Real Sense is yet to examined. This report examined  the linear relationship using scatter plots and Perason Correlation coefficient between amplitude and velocity measured by different devices. To understand the behaviour of a video recording device, a comparison of the linear relationship between a video recording device and glasses measurement obtained within a same recording session also carried out. So far we have used two video systems, Smart Eye and Real Sense, and an image processing system, Visage. We have data collected over following combinations:
+
+\begin{itemize}
+\item Smart Eye
+\item Real Sense
+\item Real Sense + Visage processing
+\end{itemize}
+
+
+It is also noted that the linear relarionship between amplitude and velocity holds for only events categorised as `saccades' and `blinks'. Since saccades can not be categorised from video recording, in this report only events caegorised as `blinks' are included. however, they does not have to be `blink correct shape'. 
+
+
+\begin{itemize}
+\item Relationship between Amplitude and Velocity
+\item Relaitonship between ZCI and BTD separated for alert and impaired sessions
+\item Relationship between BECD and BTD separated for alert and impaired sessions
+
+\end{itemize}
+
+
+\section{SmartEye}
+
+The recordings from Smart Eye has gone through many steps of processing to obtain signal as close to the corresponding glasses signal. In this report the sessions available in the folder ``T:\textbackslash 6-SW\textbackslash OptalertVideo\textbackslash JTV\_original" are used and decisions to which sessions to be used is available i nthe Decisions.tx file in the same folder.
+
+
+\subsection{Relationship betwen Amplitude and Velocity: Individual session}
+
+<<smarteye_decision, cache=TRUE, echo=FALSE, warning = FALSE, message = FALSE>>=
+
+# root directory for smarteye 
+sm_root_dir <- "T:/6-SW/OptalertVideo/JTV_original" 
+
+# read the Decisions.txt file
+sm_decisions <-  read.csv("T:/6-SW/OptalertVideo/JTV_original/Decisions.txt", header=F)
+# Identify "in" session accordign to Decisions.txt
+sm_decisions[,1] <- as.character(sm_decisions[,1])
+tmp <- strsplit(sm_decisions[,1], "==")
+sm_decisions[,2] <- trimws(do.call(c, lapply(tmp, "[", 1)), which = "both")
+sm_decisions[,3] <- trimws(do.call(c, lapply(tmp, "[", 2)), which = "both")
+colnames(sm_decisions) <- c("name","session","decision")
+
+# use session with "in" decisions
+sm_in <- sm_decisions$session[sm_decisions$decision == "IN"]
+# remove NA entries
+sm_in <- sm_in[!is.na(sm_in)] 
+
+
+# Get folder name for all sessions available in the sm_root_dir
+sm_session_all <- paste0(sm_root_dir,"/", sm_decisions$session)
+# manual fix: delete 3 sessions NO information available even though happeared in the Decisions.txt
+sm_session_all <- sm_session_all[! basename(sm_session_all) %in% c("20160809_1800_tm", "20160810_0300_tm", "20160810_0400_tm")]
+
+# Get folder name for IN session 
+sm_session_in <- paste0(sm_root_dir,"/", sm_in)
+
+
+# device name
+sm_device <- c("glasses", "smarteye")
+
+
+@
+
+
+
+<<sm_jtv, cache=TRUE ,echo=FALSE,warning=FALSE, mesage=FALSE, fig.align='center', fig.show='asis', fig.height = 10>>=
+
+# Store percentage calculated from JTV
+sm_jtv <- list()
+
+# store perminute n_lapsing and  n_stimuli 
+sm_pm_lapsing <- list()
+
+#Store blink data from glasses and video
+sm_dt <- list()
+
+#Store slope, corr, n from glasses and video condition on type
+sm_stat <- list()
+
+# session to work with. If only IN sessions to work OR all sessions to work with. 
+sm_work_session <- sm_session_in
+
+
+#################### Start looping ##########################
+for( s in 1:length(sm_work_session))
+{
+  #########################  JTV stuff ##################
+  jtv_path <- list.files(sm_work_session[s], pattern = "_jtv_", full.names = TRUE)
+  
+  react <- read.csv(list.files(jtv_path, pattern="ReactionTimes.csv", full.names = TRUE),
+                        header=TRUE, 
+                        stringsAsFactors = FALSE, 
+                        check.names = FALSE)
+ 
+  # allocate the state depending on the entry
+  react$state <- 0    #"not_lapsing"
+  react$state[react[,3]=="---"] <- 1  #"lapsing"
+  
+  # Calculate the minute start_time and end_time from the Time column
+  nr <- nrow(react)
+  lastmin <- ceiling(react[nr,2]/60)
+  start_time <- seq(0, lastmin*60, by=60)
+  end_time <- start_time+59.998
+  window <- seq(from = 0, to = (length(start_time)-1), by = 1)
+  
+  ####################  per minute reaction output  ######################
+  react_pm <-  data.frame(session = basename(sm_work_session[s]),
+                          decision = toupper(sm_decisions[sm_decisions$session == basename(sm_work_session[s]), "decision"]), 
+                          start_time = start_time, 
+                          end_time=end_time, 
+                          window = window,
+                          n_stimuli = 0,
+                          n_lapses = 0,
+                          stringsAsFactors = FALSE)
+  
+ # For each minute : count the number of stimuli & number of missing
+  for( i in 2:nrow(react_pm))
+  {
+    tmp <- react[react[,2]> start_time[i-1] &  react[,2]<= start_time[i],]
+    react_pm$n_stimuli[i] <- nrow(tmp)
+    react_pm$n_lapses[i] <- sum(tmp$state)
+  }
+  # calculate JTV percentage n_lapses/n_stimuli for (1) whole 20 min session, and (2) last 15 minute
+  jtv_percentage <-  react_pm %>%
+    group_by(session, decision) %>%
+    summarise(JTV_percentage_20min = round(100*sum(n_lapses)/sum(n_stimuli),2),
+              JTV_percentage_last15min = round(100*sum(n_lapses[.$window>=6])/sum(n_stimuli[.$window>=6]), 2)) 
+    
+  # save overall JTv percentage 
+  sm_jtv[[s]] <- jtv_percentage
+  
+  # save per minute lapses
+  sm_pm_lapsing[[s]] <- react_pm
+  
+  
+  ########################## Glasses blinks ########################
+  # read glasses blink file
+    smb_gl <- read.csv(list.files(paste0(sm_work_session[s],"/",sm_device[1]), pattern = "blink_correct_shape.csv", full.names = TRUE))
+    smb_gl$device <- "Glasses"
+    smb_gl$session <- basename(sm_work_session[s])
+    # calculate window for each blinks belong to using start_time and end_time
+    smb_gl$window <- 0
+    for(t in 1:length(start_time))
+      smb_gl[smb_gl$t_start > start_time[t] & smb_gl$t_end <= end_time[t],"window"] <- t-1
+    
+  
+  ########################## SmartEye blinks ########################
+  # read glasses blink file
+    smb_sm <- read.csv(list.files(paste0(sm_work_session[s],"/",sm_device[2]), pattern = "blink_correct_shape.csv", full.names = TRUE))
+    smb_sm$device <- "SmartEye"
+    smb_sm$session <- basename(sm_work_session[s]) 
+  
+    # calculate window for each blinks belong to using start_time and end_time
+    smb_sm$window <- 0
+    for(t in 1:length(start_time))
+      smb_sm[smb_sm$t_start > start_time[t] & smb_sm$t_end <= end_time[t],"window"] <- t-1
+    
+  #################### combine two device's data #######################
+    sm_dt[[s]] <- rbind(smb_gl, smb_sm)
+    sm_dt[[s]]$type <- factor(sm_dt[[s]]$type, level = c("1", "-1"))
+    
+     
+   #################### obtain different stat: n_events, slope & Pearson correlation coefficient ####################### 
+   
+    statf <- 
+       sm_dt[[s]] %>%
+       group_by(session, device, type) %>%
+       do(mod1 = lm(maxamp~maxvel, data = .), 
+          mod2 = cor(.$maxamp, .$maxvel, method = "pearson"),
+          mod3 = nrow(.)) %>%
+       mutate(n_events = round(mod3[[1]],2),
+              slope = round(summary(mod1)$coeff[2],2), 
+              correlation = round(mod2[1],2)) %>%
+       select(-mod1, -mod2, -mod3) %>%
+       arrange(type)
+      
+     #### mean andstandard deviation of avr
+     stat_avr <- 
+       sm_dt[[s]] %>%
+       group_by(session, device ,type) %>%
+       summarise(mean_avr = round(mean(avr),3),
+                 sd_avr = round(sd(avr),3)) %>% 
+       arrange(type)
+     
+     statf <- right_join(statf, stat_avr, by=c("session", "device","type"))
+     
+     # store
+     sm_stat[[s]] <- statf
+     
+ #################################### scatter plot ##############################
+    
+    sc_plot <-  
+        ggplot(data=sm_dt[[s]], aes(x=maxvel, y =maxamp)) +
+        geom_point(color = "blue", shape=21) + 
+        facet_wrap(~ device+ type,  labeller = label_both )  +
+        stat_smooth(method = "lm", col="red") + 
+        ggtitle(basename(sm_session_in[s])) +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+        
+  
+   #################################### table plot for stat ##############################  
+   statdt <- data.frame(x=c(0,1),y=c(0,1))
+   statplot <- ggplot(data=statdt, aes(x=x,y=y))+
+               geom_blank()+
+               annotation_custom(tableGrob( statf, rows =NULL, theme = ttheme_default(base_size = 10)), 
+                                  xmin=0, xmax=1, ymin=0, ymax=1)+
+                theme_bw()+
+                theme(legend.position = "none",
+                      axis.title.x=element_blank(),
+                      axis.text.x=element_blank(),
+                      axis.ticks.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks.y=element_blank(),
+                      panel.background = element_blank(),
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank()) 
+   
+   
+   #################################### table plot for JTV percentage ##############################  
+   jtvdt <- data.frame(x=c(0,1),y=c(0,1))
+   jtvplot <- ggplot(data=jtvdt, aes(x=x,y=y))+
+               geom_blank()+
+               annotation_custom(tableGrob( jtv_percentage, rows =NULL, theme = ttheme_default(base_size = 10)), 
+                                  xmin=0, xmax=1, ymin=0, ymax=1)+
+                theme_bw()+
+                theme(legend.position = "none",
+                      axis.title.x=element_blank(),
+                      axis.text.x=element_blank(),
+                      axis.ticks.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks.y=element_blank(),
+                      panel.background = element_blank(),
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank())
+   
+   ######################## organise plots ####################
+   
+     grid.arrange(sc_plot, statplot, jtvplot,
+             ncol=1,
+             heights = c(7,2, 1))
+     
+  }
+
+@
+
+
+
+
+
+\section[Combined analysis]{Relationship betwen Amplitude and Velocity: combined sessions}
+
+
+<<combine_data, cache=TRUE ,echo=FALSE, warning=FALSE, message=FALSE>>=
+
+########################### combine for all subjects ####################
+
+# jtv whole percetage
+sm_jtv_all <- do.call(rbind, sm_jtv)
+
+# jtv per minute lapsing
+sm_jtv_pm_lapsing_all <- do.call(rbind,  sm_pm_lapsing)
+
+# glasses & visage_smarteye data
+sm_dt_all <- do.call(rbind, sm_dt)
+
+# stat fro mboth devices
+sm_stat_all <- do.call(rbind, sm_stat)
+
+
+# add JTV_percentage_20min to the data
+sm_dt_all <-  right_join(sm_dt_all, sm_jtv_all[,c("session", "JTV_percentage_20min")], by="session")
+
+# add state JTV_percentage_20min > 5% ==> impaired,
+sm_dt_all$state <- "not_impaired"
+sm_dt_all$state[sm_dt_all$JTV_percentage_20min > 5] <- "impaired"
+
+
+# add per minute n_lapses & n_stimuli with sm_dt_all
+# remove if any NA occure due to coaortion
+sm_dt_all <- na.omit(right_join(sm_dt_all , sm_jtv_pm_lapsing_all[,c("session","window", "n_stimuli", "n_lapses")], by=c("session", "window")))
+
+@
+
+
+
+<<final_Session_name, cache=TRUE ,echo=FALSE, warning=FALSE, message=FALSE>>=
+
+########################### final sessions to build model #############################
+# Drop sessions according to Murray's suggestions
+
+sm_session_drop <- c("20160811_1130_pn", "20160812_0340_pn", "20160812_0440_pn", "20160817_041043_ms")
+sm_session_final <- sm_session_in[! basename(sm_session_in) %in% sm_session_drop]
+
+
+####################### final data #############################
+sm_dt_final <- sm_dt_all[sm_dt_all$session %in% basename(sm_session_final), ]
+sm_dt_final$state <- factor(sm_dt_final$state, level = c("not_impaired","impaired"))
+
+########### number of final session ##########
+n_session_final <- length(sm_session_final)
+
+model_device <- "SmartEye"
+@
+
+After evaluating the relationship between amplitude and velocity, four more sessions were dropped from further analysis:
+
+<<print_drop, cache=TRUE ,echo=FALSE, results='text'>>=
+print(sm_session_drop)
+
+@
+
+
+
+Now we have \Sexpr{length(sm_session_final)} sessions, among which \Sexpr{length(unique(sm_dt_final$session[sm_dt_final$state=="not_impaired"]))} were `not\_impaired' and \Sexpr{length(unique(sm_dt_final$session[sm_dt_final$state=="impaired"]))} were `impaired'.
+
+
+The relationship between amplitude and velocity is examined for all sessions combined and following comparison was carried: 
+
+\begin{itemize}
+\item comparison of relationship between maxamp and maxvel between two state of impairment. Within each state there are  the two devices and two types of events, eye closing and eye reopenning. Histograms of AVR are also produced in these four cases. A summary stat table shows the slope, correlation coefficients, mean of AVR, standard deviation of AVR in all four combinations.  
+
+\item comparison of relationship between log(Positive ZCI)  and log(BTD)
+
+\item comparison of relationship between log(Negative ZCI)  and log(BTD)
+
+\item comparison of relationship between log(BECD)  and log(BTD)
+
+\end{itemize}
+
+
+These comparisons are taken place to examine the extent of relationship between variables in the `not\_impaired' and `impaired' subsets. The true state of impairment is obtained using the reaction time from JTV test output that was taken place simultenously during recordinds. Usually a cut-off percentage of lapsing ($5\%$) calcualted csidering whole recording session is used to label a subject's  state of impairment. If the total JTv percentage is below $5\%$ all observations in that sessions were labelled as `not\_impaired'.
+
+However, it is also worth to mention that human brain can show some alertness during a drowsy period, and some signs of drowsyness during an alert period. Hence, no lapsing minute can be observed even though the JTV percentage from whole recording session was above the $5\%$ arbtrary thresh-holds. To make the algorithm accostom with these brain activity, the relationship between above mentioned variables are also examined in the conditional subset of data using per minute lapsing.    
+
+
+
+<<combine_plot, cache=TRUE ,echo=FALSE, warning = FALSE, message=FALSE, fig.align='center', fig.show='asis', fig.height = 10>>=
+
+################# common x & y limit for not_impaired and drowsy data ##################
+
+cx <- range(sm_dt_final$maxvel)
+cy <- range(sm_dt_final$maxamp)
+
+
+######################## not_impaired data plot ##################
+sm_gl_dt <- sm_dt_final[sm_dt_final$device == "Glasses",]
+sm_gl_dt$type <- factor(sm_gl_dt$type, level = c("1","-1"))
+
+sm_gl_plot <-  ggplot(data=sm_gl_dt, aes(x=maxvel, y =maxamp)) +
+        geom_point(color = "blue", shape=21) + 
+        scale_x_continuous(limits = c(0, 1700)) + 
+        scale_y_continuous(limits= c(0,1700)) + 
+        facet_wrap(~ state+ type,  labeller = label_both )  +
+        stat_smooth(method = "lm", col="red") + 
+        ggtitle(paste0("Device: Glasses \nRelationship between Amplitude and Velocity (",n_session_final,"sessions combined)")) +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+        
+
+##################### slope ,correlation ##################
+sm_gl_stat1 <- 
+  sm_gl_dt %>%
+  group_by(state, type) %>%
+  do(mod1 = lm(maxamp~maxvel, data = .), 
+     mod2 = cor(.$maxamp, .$maxvel, method = "pearson"),
+     mod3 = nrow(.)) %>%
+  mutate(n_events = mod3[[1]],
+         slope = round(summary(mod1)$coeff[2],3), 
+         correlation = round(mod2[1],3)) %>%
+       select(-mod1, -mod2, -mod3) %>%
+       arrange(type)
+
+
+#### mean & sd of avr #######################
+sm_gl_stat2 <- 
+  sm_gl_dt %>%
+  group_by(state, type) %>%
+  summarise(mean_avr = round(mean(avr),3), 
+            sd_avr = round(sd(avr),3)) %>% 
+  arrange(type)
+
+### combine stat file #####################
+sm_gl_stat3 <- data.frame("device" = "Glasses", right_join(sm_gl_stat1, sm_gl_stat2, by=c("state","type")) )
+
+################ alert stat plot #########################
+
+tabdt <- data.frame(x=c(0,1),y=c(0,1))
+sm_gl_stat_plot <- ggplot(data=tabdt, aes(x=x,y=y))+
+               geom_blank()+
+               annotation_custom(tableGrob( sm_gl_stat3, rows =NULL, theme = ttheme_default(base_size = 11)), 
+                                  xmin=0, xmax=1, ymin=0, ymax=1)+
+                ggtitle(paste0("Device: Glasses \nSummary measures (",n_session_final," sessions combined)")) +
+                theme_bw() +
+                theme(legend.position = "none",
+                      axis.title.x=element_blank(),
+                      axis.text.x=element_blank(),
+                      axis.ticks.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks.y=element_blank(),
+                      panel.background = element_blank(),
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank(),
+                       plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+
+
+############### alert: histogram of AVR ##################
+
+gl_avr_hist <- ggplot(data = sm_gl_dt, aes(x=avr)) + 
+  geom_histogram(colour="darkblue", fill = "lightblue", binwidth = 0.5) +
+  scale_x_continuous(limits=c(0,6), breaks = seq(0,6, 0.5)) + 
+   xlab("AVR") +
+  ylab("No. of blinks")+
+  facet_wrap(~ state+ type,labeller = label_both) +
+  theme_bw()+
+  theme(legend.position = "none",
+          plot.title = element_text(size=14, hjust = 0.5, face="bold")) +
+  ggtitle(paste0("Histogram of AVR (", n_session_final," sessions combined): \nGlasses"))
+
+
+
+
+##############################  drowsy data ###################################   
+   
+sm_sm_dt <- sm_dt_final[sm_dt_final$device == "SmartEye",]
+sm_sm_dt$type <- factor(sm_sm_dt$type, level = c("1","-1"))
+
+sm_sm_plot <-  ggplot(data=sm_sm_dt, aes(x=maxvel, y =maxamp)) +
+   scale_x_continuous(limits = c(0, 1500)) + 
+        scale_y_continuous(limits= c(0,1500)) + 
+        geom_point(color = "blue", shape=21) + 
+        facet_wrap(~ state+ type,  labeller = label_both )  +
+        stat_smooth(method = "lm", col="red") + 
+        ggtitle(paste0("Device: SmartEye \nRelationship between Amplitude and Velocity (", n_session_final, " sessions combined)")) +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+        
+
+##################### slope ,correlation ##################
+sm_sm_stat1 <- 
+  sm_sm_dt %>%
+  group_by(state, type) %>%
+  do(mod1 = lm(maxamp~maxvel, data = .), 
+     mod2 = cor(.$maxamp, .$maxvel, method = "pearson"),
+     mod3 = nrow(.)) %>%
+  mutate(n_events = round(mod3[[1]],3),
+         slope = round(summary(mod1)$coeff[2],3), 
+         correlation = round(mod2[1],3)) %>%
+      select(-mod1, -mod2, -mod3) %>%
+       arrange(type)
+
+
+#### mean & sd of avr #######################
+sm_sm_stat2 <- 
+  sm_sm_dt %>%
+  group_by(state, type) %>%
+  summarise(mean_avr = round(mean(avr), 3),
+            sd_avr = round(sd(avr),3)) %>% 
+  arrange(type)
+
+### combine stat file #####################
+sm_sm_stat3 <- data.frame("device" = "SmartEye", right_join(sm_sm_stat1, sm_sm_stat2, by=c("state","type")) )
+
+################ sm stat plot #########################
+
+
+tabdt <- data.frame(x=c(0,1),y=c(0,1))
+   sm_sm_stat_plot <- ggplot(data=tabdt, aes(x=x,y=y))+
+               geom_blank()+
+               annotation_custom(tableGrob( sm_sm_stat3, rows =NULL, theme = ttheme_default(base_size = 11)), 
+                                  xmin=0, xmax=1, ymin=0, ymax=1)+
+                ggtitle(paste0("Summary measures (", n_session_final, " sessions combined): SmartEye"))+
+                theme_bw() +
+                theme(legend.position = "none",
+                      axis.title.x=element_blank(),
+                      axis.text.x=element_blank(),
+                      axis.ticks.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks.y=element_blank(),
+                      panel.background = element_blank(),
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank(),
+                       plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+
+  
+
+############### sm: histigram of AVR ##################
+
+sm_avr_hist <- ggplot(data = sm_sm_dt, aes(x=avr)) + 
+  geom_histogram(colour="darkblue", fill = "lightblue", binwidth = 0.5) +
+  scale_x_continuous(limits=c(0,6), breaks = seq(0,6, 0.5)) + 
+   xlab("AVR") +
+  ylab("No. of blinks")+
+  facet_wrap(~ state+ type,labeller = label_both) +
+  theme_bw()+
+  theme(legend.position = "none",
+          plot.title = element_text(size=14, hjust = 0.5, face="bold")) +
+  ggtitle(paste0("Histogram of AVR (", n_session_final," sessions combined) \nDevice: SmartEye"))
+
+   
+    
+   
+############ scatter plot #################   
+grid.arrange(sm_gl_plot, sm_gl_stat_plot,
+             ncol=1,
+             heights = c(7,3))
+
+   
+   
+############## table plot ###############
+grid.arrange(sm_sm_plot, sm_sm_stat_plot,
+             ncol=1,
+             heights = c(7,3))
+
+############ historam of AVR plot #################   
+grid.arrange(gl_avr_hist , sm_avr_hist ,
+             ncol=1,
+             heights = c(5,5)) 
+
+
+@
+
+
+
+
+\subsection{Video JDS model for SmartEye}
+
+
+\begin{itemize}
+
+\item Compared to glasses JDS algorithm, some variables can not be measured accurately form video signals. Any variable associated with DOQ, Saccades, Long Closures are not available for video data. The following variables are used in the linear model:
+
+<<independent_var, cache=TRUE, echo=FALSE>>=
+
+   indep_var <- c("LnMeanPositiveZCI",
+                  "LnStdDevPositiveZCI",
+                  "LnMeanNegativeZCI" ,
+                  "LnStdDevNegativeZCI", 
+                  "LnMeanNegativeIED", 
+                  "LnStdDevNegativeIED",     
+                  "LnMeanBECD",
+                  "LnStdDevBECD",
+                  "LnMeanBTD",
+                  "LnStdDevBTD",
+                  "LnMeanPositiveAVR",
+                  "LnStdDevPositiveAVR",
+                  "LnMeanNegativeAVR",
+                  "LnStdDevNegativeAVR", 
+                  "LnMeanAVRProduct", 
+                  "LnStdDevAVRProduct")
+   
+@
+
+
+<<var_print, cache=TRUE, echo= FALSE, results='text'>>=
+
+   print(indep_var)
+@
+
+
+
+\item The same difinition/criteria are used to define blink\_correct\_shape for both glasses and video blinks. These criteria are defined based on glasses blinks characteristics.
+
+%\end{itemize}
+
+
+%To develop new weightings for video JDS model, two appproaches are used:
+
+%\begin{itemize}
+\item Linear model: Since there is no data associated with driving condition, the component identified by JDSB is irrelevent here. The Raw JDS is nothing but the JDSA itself. JDSA is fitted using stepwise forward-backward variable selection method. 
+
+%\item Logistic model: using the original class labels of alert and drowsy minutes, a model is build to predict the probability of being in a class. 
+
+\end{itemize}
+
+
+
+
+<<linear_regression_data_prep, cache=TRUE ,echo=FALSE>>=
+
+#Store summary stat from samrtEye
+sm_ss <- list()
+
+# store jds score from glasses 
+   
+gl_score <- list()
+
+# Read summary  stat file
+for(s in 1:length(sm_session_final))
+{
+  ss <- read.csv(list.files(paste0(sm_session_final[s],"/smarteye"), pattern = "summary_stats.csv", full.names = TRUE)
+                        , header=TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+  ss$device <- "SmartEye"
+  ss$session <- basename(sm_session_final[s])
+  sm_ss[[s]] <- ss
+  
+  # read score file from glasses
+  gl <- read.csv(list.files(paste0(sm_session_final[s],"/glasses"), pattern = "jds_stats.csv", full.names = TRUE)
+                        , header=TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+  gl$device <- "Glasses"
+  gl$session <- basename(sm_session_final[s])
+  gl_score[[s]] <- gl
+  
+}
+
+
+# combine data for all sessions 
+sm_mdt <- do.call(rbind, sm_ss)
+############## add JTV responses ##############
+sm_mdt <- right_join(sm_mdt, sm_jtv_all[,c("session","JTV_percentage_20min")], by="session")
+
+
+############## add  n_lapses responses ##############
+sm_mdt <- right_join(sm_mdt, sm_jtv_pm_lapsing_all[,c("session","window", "n_stimuli", "n_lapses")], by=c("session", "window"))
+
+
+############################## add state : impaired ( JTV_percentage_20min > 5%) ######################
+sm_mdt$state20min <- "not_impaired"
+sm_mdt$state20min[sm_mdt$JTV_percentage_20min > 5] <- "impaired"
+sm_mdt$state20min <- factor(sm_mdt$state20min , levels= c("not_impaired","impaired"))
+
+
+
+############################## add lapsing minute ( n_lapses > 0) ######################
+sm_mdt$lapsing_minute <- "no"
+sm_mdt$lapsing_minute[sm_mdt$n_lapses > 0] <- "yes"
+sm_mdt$lapsing_minute <- factor(sm_mdt$lapsing_minute , levels= c("no","yes"))
+
+
+# remove NA
+sm_mdt <- na.omit(sm_mdt)
+
+
+#########################  glasses ######################
+# combined glasses score for all sessions
+# for a valid comparison to video model, raw jds are truncated to 0, 10
+gl_score_all <- do.call(rbind, gl_score)
+
+gl_score_all <- right_join(gl_score_all, sm_jtv_all[,c("session","JTV_percentage_20min")], by="session")
+gl_score_all <-  right_join(gl_score_all , sm_jtv_pm_lapsing_all[,c("session","window", "n_stimuli", "n_lapses")], by=c("session", "window"))
+
+gl_score_all$state20min <- "not_impaired"
+gl_score_all$state20min[gl_score_all$JTV_percentage_20min > 5] <- "impaired"
+gl_score_all$state20min <- factor(gl_score_all$state20min , levels= c("not_impaired","impaired"))
+
+gl_score_all$lapsing_minute <- "no"
+gl_score_all$lapsing_minute[gl_score_all$n_lapses > 0] <- "yes"
+gl_score_all$lapsing_minute <- factor(gl_score_all$lapsing_minute , levels= c("no","yes"))
+
+gl_score_all <- na.omit(gl_score_all)
+
+@
+
+
+
+%\clearpage
+
+\subsection[Linear model: SmartEye video]{Video JDS model for SmartEye using JTV\_percentage\_20min as state of impairment}
+
+A video model is derived using the per minute observations. The JTV\_percentage\_20min is used to define the state of impairment. Every valid minute in a recording is labelled as  not\_impaired if the JTV\_percetage\_20min is below $5\%$ and impaired otherwise. 
+
+To facilitate the linear model, all the not\_impaired observaitons are coded as -4 and al lthe impaired observaions are coded as 9. Important variables are selected using the stepwsie forward-backward algorithm. 
+
+
+
+<<linear_jds, cache=TRUE, echo= FALSE, warning=FALSE, message=FALSE>>=
+
+# jds code: alert = -1 and drowsy = 8
+sm_mdt$state20min_code <- -4
+sm_mdt$state20min_code[sm_mdt$state20min =="impaired"] <- 9
+
+####################### forward- backward variable selection ###################
+# jds original model formula
+state20min_imf <- formula(paste0('state20min_code',"~", paste0(indep_var, collapse = "+")))
+
+# jdsa full model
+state20min_full_mod <- ols(state20min_imf, data= sm_mdt)
+
+# extract dependent variable from formula
+state20min_dep_var <- all.vars(update(state20min_imf,.~0))
+
+# check if there is multicollinearity issue/ offending variables exits. 
+# The offending variables coeffcients are not estimating and dropped from analysis
+  if(any(is.na(state20min_full_mod$coefficients))==TRUE){
+    # model with non-offending  predictors
+    state20min_imf_new <- formula(paste0(state20min_dep_var, "~", 
+                                         paste0(names(state20min_full_mod$coefficients[!is.na(state20min_full_mod$coefficients)])[-1], collapse="+")))
+    # fit new full model after dropping offending variables 
+    state20min_full_mod_new <- ols(state20min_imf_new, data=sm_mdt) 
+  } else{
+  # if no offending variables exists use the full.mod
+    state20min_imf_new <- state20min_imf
+    state20min_full_mod_new <- state20min_full_mod
+  }
+  # Perform backward elimination for model persimony	
+  state20min_step_mod <- fastbw(state20min_full_mod_new, rule='p', type='individual', sls=0.05) 
+  # final model formula
+  state20min_imf_final <- formula(paste0(state20min_dep_var, "~", paste0(state20min_step_mod$names.kept, collapse="+")))
+  # final model after variable selection /backward elimination
+  state20min_final_mod <- ols(state20min_imf_final, data=sm_mdt)
+
+@
+
+
+The final model selected for JDS using forward-backward variable elimination is  
+
+<<state20min_final_model_print, cache=TRUE ,echo=FALSE, results='text'>>=
+
+  print(state20min_final_mod)
+  
+@
+
+
+Raw JDS values are obtained by multiplying the weights with the corresponding values of the selected variables. Truncation was done to have all values between $0$ and $10$. 
+
+<<jdsa_calc, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE>>=
+
+# calculate jds values
+sm_mdt$state20min_jds <- predict(state20min_final_mod, data = sm_mdt)  
+  
+# truncate to have values in between 0 (values <0 to 0) and 10 (values > 10 to 10)
+sm_mdt$state20min_jds[sm_mdt$state20min_jds <= 0] <- 0
+sm_mdt$state20min_jds[sm_mdt$state20min_jds >= 10] <- 10
+
+# write.csv(sm_mdt, "C:/Research/VideoReport_YK/SmartEye_everything/JDSModel_New/smarteye_new_jds_model_2.csv", row.names=FALSE)
+
+@
+
+
+
+
+<<state20_jds_plot, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show='asis', fig.height=6.5>>=
+ 
+plot_dt <- sm_mdt[,c("session","state20min","state20min_jds")]
+plot_dt$fcolor <- ifelse(plot_dt$state20min_jds >5, "tomato", ifelse(plot_dt$state20min_jds < 4.5, "green", "yellow"))
+plot_dt$fcolor <- factor(plot_dt$fcolor, levels  = c("green","yellow","tomato"))
+
+state20min_jds_plot <- ggplot(data= plot_dt, aes(x=state20min_jds, fill = fcolor)) +
+  geom_histogram(breaks = seq(0,10,0.5), colour="grey",binwidth = 0.5)+
+   scale_fill_manual(values = c("green","yellow","tomato")) +
+  xlab("Raw JDS score")+
+  facet_wrap(~ state20min,labeller = label_both, ncol=1) +
+  theme_bw()+
+  theme(legend.position = "none",
+        strip.text = element_text(size=14),
+          plot.title = element_text(size=14, hjust = 0.5, face="bold")) +
+  ggtitle(paste0("Raw JDS from ",model_device, " (", n_session_final, " sessions)\n
+          impaired state = JTV_percentage_20min > 5%"))
+
+state20min_jds_plot
+
+
+
+################################
+gl_dt <- gl_score_all[,c("session","state20min","jds_raw")]
+gl_dt$jds_raw[gl_dt$jds_raw < 0] <- 0
+gl_dt$jds_raw[gl_dt$jds_raw > 10] <- 10
+
+gl_dt$fcolor <- ifelse(gl_dt$jds_raw >5, "tomato", ifelse(gl_dt$jds_raw < 4.5, "green", "yellow"))
+gl_dt$fcolor <- factor(gl_dt$fcolor, levels  = c("green","yellow","tomato"))
+
+gl_jds_plot <- ggplot(data= gl_dt, aes(x=jds_raw, fill = fcolor)) +
+  geom_histogram(breaks= seq(0,10,0.5), colour="grey",binwidth = 1)+
+   scale_fill_manual(values = c("green","yellow","tomato")) +
+  xlab("Truncated Raw JDS score")+
+  facet_wrap(~ state20min,labeller = label_both, ncol=1) +
+  theme_bw()+
+  theme(legend.position = "none",
+        strip.text = element_text(size=14),
+          plot.title = element_text(size=14, hjust = 0.5, face="bold")) +
+  ggtitle(paste0("Truncated Raw JDS from  Glasses", " (", n_session_final, " sessions)\n
+          impaired state = JTV_percentage_20min > 5%"))
+
+gl_jds_plot
+
+
+
+
+@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ignoring this, sm_dt doesn't have state column, RESOLVE LATER --> Vipul
+%\subsection*{Relationship between other variables}
+
+<<sm_variable_plot, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show='asis', fig.height=5, eval=FALSE>>=
+
+sm_vid_blink_dt <- sm_dt[sm_dt$device=="SmartEye" & sm_dt$session %in% basename(sm_session_final),]
+sm_vid_blink_dt$state <- factor(sm_vid_blink_dt$state, levels = c("not_impaired", "impaired"))
+
+
+pos_zci_btd_plot <- ggplot(data=sm_vid_blink_dt[sm_vid_blink_dt$type==1,], aes(x=btd, y=zci)) +
+   geom_point(color = "blue", shape=21) + 
+  scale_x_log10()+
+  scale_y_log10()+
+   ylab("log( Positive ZCI )")+
+    xlab("log( BTD )") +
+        facet_wrap(~ device+ state,  labeller = label_both )  +
+        ggtitle("Relationship between Pos ZCI and BTD\n (all sessions combined)") +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+
+pos_zci_btd_plot
+
+############ 
+
+
+neg_zci_btd_plot <- ggplot(data=sm_vid_blink_dt[sm_vid_blink_dt$type==-1,], aes(x=btd, y=zci)) +
+   geom_point(color = "blue", shape=21) + 
+  scale_x_log10()+
+  scale_y_log10()+
+   ylab("log( Negative ZCI )")+
+    xlab("log( BTD )") +
+        facet_wrap(~ device+ state,  labeller = label_both )  +
+        ggtitle("Relationship between Neg ZCI and BTD\n (all sessions combined)") +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+
+neg_zci_btd_plot
+
+
+########## 
+
+becd_btd_plot <- ggplot(data=sm_vid_blink_dt[sm_vid_blink_dt$type==1,], aes(x=btd, y=becd)) +
+   geom_point(color = "blue", shape=21) + 
+  scale_x_log10()+
+  scale_y_log10()+
+   ylab("log( BECD )")+
+  xlab("log( BTD )") + 
+        facet_wrap(~ device+ state,  labeller = label_both)  +
+        ggtitle("Relationship between Neg ZCI and BTD\n (all sessions combined)") +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+
+becd_btd_plot
+
+
+########## 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+@
+
+%%%%%%%%%%%%%%%%% CONTINUE FROM HERE LATER %%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+
+\subsection[Linear video model using lapsing minutes]{Video JDS for SmartEye using lapsing minute}
+
+<<video_nlapses_allocation, cache=TRUE ,echo=FALSE, warning=FALSE, message=FALSE>>=
+
+sm_mdt$statelapse <- NA   
+
+sm_mdt$statelapse[sm_mdt$state20min =="not_impaired" & sm_mdt$lapsing_minute =="no"] <-  "not_impaired_not_lapsing"
+sm_mdt$statelapse[sm_mdt$state20min =="not_impaired" & sm_mdt$lapsing_minute =="yes"] <-  "not_impaired_lapsing"
+sm_mdt$statelapse[sm_mdt$state20min =="impaired" & sm_mdt$lapsing_minute =="no"] <-  "impaired_not_lapsing"
+sm_mdt$statelapse[sm_mdt$state20min =="impaired" & sm_mdt$lapsing_minute =="yes"] <-  "impaired_lapsing"
+
+sm_mdt$statelapse <- factor(sm_mdt$statelapse, levels =c("not_impaired_not_lapsing", "not_impaired_lapsing","impaired_not_lapsing","impaired_lapsing"))
+
+# statelapse code: alert = -1 and drowsy = 8
+sm_mdt$statelapse_code <- 100
+sm_mdt$statelapse_code[sm_mdt$statelapse =="not_impaired_not_lapsing"] <- -1
+sm_mdt$statelapse_code[sm_mdt$statelapse =="impaired_lapsing"] <- 9
+
+####### subset data to have only statelapse_code 
+sm_mdt2 <- sm_mdt[sm_mdt$statelapse %in% c("not_impaired_not_lapsing","impaired_lapsing"),] 
+
+@
+
+
+The distribution of these two classes are
+
+<<state_lapsing_table, cache=TRUE ,echo=FALSE, results='asis'>>=
+
+print(xtable(table(sm_mdt$state20min,sm_mdt$lapsing_minute),
+             auto=TRUE,
+             caption = "Distribution of classes using JTV\\_percentage\\_20min and lapsing\\_minute"),
+      booktabs = TRUE,
+      include.rownames = TRUE)
+
+@
+
+
+<<video_jdsmodel_nlapses, cache=TRUE ,echo=FALSE, warning=FALSE, message=FALSE>>=
+
+
+####################### forward- backward variable selection ###################
+# jds original model formula
+statelapses_imf <- formula(paste0('statelapse_code',"~", paste0(indep_var, collapse = "+")))
+
+# jdsa full model
+statelapses_full_mod <- ols(statelapses_imf, data= sm_mdt2)
+
+# extract dependent variable from formula
+statelapses_dep_var <- all.vars(update(statelapses_imf,.~0))
+
+# check if there is multicollinearity issue/ offending variables exits. 
+# The offending variables coeffcients are not estimating and dropped from analysis
+  if(any(is.na(statelapses_full_mod$coefficients))==TRUE){
+    # model with non-offending  predictors
+    statelapses_imf_new <- formula(paste0(statelapses_dep_var, "~", 
+                                         paste0(names(statelapses_full_mod$coefficients[!is.na(statelapses_full_mod$coefficients)])[-1], collapse="+")))
+    # fit new full model after dropping offending variables 
+    statelapses_full_mod_new <- ols(statelapses_imf_new, data=sm_mdt2) 
+  } else{
+  # if no offending variables exists use the full.mod
+    statelapses_imf_new <- statelapses_imf
+    statelapses_full_mod_new <- statelapses_full_mod
+  }
+  # Perform backward elimination for model persimony	
+  statelapses_step_mod <- fastbw(statelapses_full_mod_new, rule='p', type='individual', sls=0.05) 
+  # final model formula
+  statelapses_imf_final <- formula(paste0(statelapses_dep_var, "~", paste0(statelapses_step_mod$names.kept, collapse="+")))
+  # final model after variable selection /backward elimination
+  statelapses_final_mod <- ols(statelapses_imf_final, data=sm_mdt2)
+
+
+# calculate jds values
+sm_mdt$statelapse_jds <- predict(statelapses_final_mod, newdata=sm_mdt)  
+  
+# truncate to have values in between 0 (values <0 to 0) and 10 (values > 10 to 10)
+sm_mdt$statelapse_jds[sm_mdt$statelapse_jds <= 0] <- 0
+sm_mdt$statelapse_jds[sm_mdt$statelapse_jds >= 10] <- 10
+
+@
+
+
+<<statelapses_final_model_print, cache=TRUE ,echo=FALSE, results='text'>>=
+
+  print(statelapses_final_mod)
+  
+@
+
+% Continue here %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+<<statelapses_jds_plot, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show='asis', fig.height=7>>=
+ 
+plot_dt <- sm_mdt[,c("session","state20min","lapsing_minute", "statelapse_jds")]
+plot_dt$fcolor <- ifelse(plot_dt$statelapse_jds >5, "tomato", ifelse(plot_dt$statelapse_jds < 4.5, "green", "yellow"))
+plot_dt$fcolor <- factor(plot_dt$fcolor, levels  = c("green","yellow","tomato"))
+
+statelapses_jds_plot <- ggplot(data= plot_dt, aes(x=statelapse_jds, fill = fcolor)) +
+  geom_histogram(breaks = seq(0,10,0.5), colour="grey",binwidth = 0.5)+
+   scale_fill_manual(values = c("green","yellow","tomato")) +
+  xlab("Raw JDS score")+
+  facet_wrap(~  state20min+lapsing_minute,labeller = label_both) +
+  theme_bw()+
+  theme(legend.position = "none",
+        strip.text = element_text(size=12),
+          plot.title = element_text(size=12, hjust = 0.5, face="bold")) +
+  ggtitle(paste0("Raw JDS from ",model_device, " (", n_session_final, " sessions)\n
+       Model with number of lapses within JTV_percentage_20min"))
+
+statelapses_jds_plot
+
+@
+
+
+
+
+
+<<risk_per_minute_plot_all, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show= 'asis', fig.align='center', fig.height = 4.5>>=
+
+#bin predicted JDS score in binwidth of 
+bin_low <- seq(0,9,1)
+bin_up <- c(seq(0.9,8.9,1),10) 
+
+# classify them according to the bin
+sm_mdt$statelapsejds_bin <- cut(round(sm_mdt$statelapse_jds,1), breaks = c(0,bin_up), right = TRUE, include.lowest = TRUE)
+sm_mdt$statelapsejds_bin_name <- factor(sm_mdt$statelapsejds_bin , labels = c(1:10))
+
+# calculate percentage of minute with at least one lapse that falls within each score group 
+# relative risk?? 
+
+rr_jds <- 
+  sm_mdt %>%
+  group_by(statelapsejds_bin_name) %>%
+  summarise(total_minute = length(n_lapses),
+            n_lapsing_minute = sum(n_lapses> 0)) %>%
+  mutate(lapsing_minute_perc = round(100*n_lapsing_minute/total_minute, 1))
+
+#################################################################################
+# bar plot of percentage of lasping minute that falls wihtin each score group
+
+# draw a box width = 2.64 and height = 2.01
+# plot(x = seq(0, 12,length.out = 17),
+#      y = seq(0, 80, by=5), 
+#      ylab = "Holes searched before target",
+#      xlab = "",
+#      axes = FALSE,
+#      type="n")
+
+# bar data
+bardt <- rr_jds
+
+# calculate top of each bar to print text
+bartopText.y <-bardt$lapsing_minute_perc + 7
+
+score_plot1 <- barplot(height=bardt$lapsing_minute_perc, 
+               ylim = c(0,80),
+               col = c("green", "green","green", "green","yellow","tomato", "tomato","tomato","tomato","tomato"),
+               xlab = "Raw JDS score",
+               ylab = "% minute with at least one lapse",
+               main = paste0("Validation of JDS score from ", model_device, "(", n_session_final, " sessions) \n (TM = Total minute; TLM = Total lapsing minute)"),
+               font.main = 1)
+
+# x-axis line. lwd controls width of the line. 
+lines(x=c(-0.5,length(bardt)+3), y=c(0,0), lwd=1)
+
+# text on top of each bar
+text(x = score_plot1, 
+     y = bartopText.y,
+     pos = 1,
+     offset = 0.2,
+     labels = paste0("TM= ",bardt$total_minute,"\n","TLM= ", bardt$n_lapsing_minute), 
+     cex = 0.6)  
+
+# xaxis label
+axis(side=1, at = score_plot1, labels = c("0-0.9", "1-1.9", "2-2.9", "3-3.9","4-4.9", "5-5.9","6-6.9","7-7.9","8-8.9","9-10"),
+     cex.axis = 0.8)
+
+
+@
+
+\vspace{0.5cm}
+
+
+<<risk_per_minute_plot_lessgroup, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show= 'asis', fig.align='center', fig.height = 4.5>>=
+
+# Combine last three group together
+
+rr_jds_8plus <- 
+  rr_jds %>%
+  filter(statelapsejds_bin_name %in% c(9,10)) %>%
+  summarize(total_minute = sum(total_minute),
+            n_lapsing_minute = sum(n_lapsing_minute)) %>%
+  mutate(lapsing_minute_perc =round(100*n_lapsing_minute/total_minute,1))
+
+rr_jds_8plus <-   data.frame(statelapsejds_bin_name ="8+", rr_jds_8plus)
+
+rr_jds_comb <- rbind(rr_jds[rr_jds$statelapsejds_bin_name %in% c(1:8),],  rr_jds_8plus)
+
+
+# bar data
+bardt <- rr_jds_comb
+
+# calculate top of each bar to print text
+bartopText.y <-bardt$lapsing_minute_perc + 7
+
+score_plot2 <- barplot(height=bardt$lapsing_minute_perc, 
+               ylim = c(0,80),
+               col = c("green", "green","green", "green","yellow","tomato", "tomato","tomato","tomato","tomato"),
+               xlab = "Raw JDS score",
+               ylab = "% minute with at least one lapse",
+               main = paste0("Validation of JDS score from ", model_device,"(", n_session_final, " sessions) \n (TM = Total minute; TLM = Total lapsing minute)"),
+               font.main = 1)
+
+# x-axis line. lwd controls width of the line. 
+lines(x=c(-0.5,length(bardt)+3), y=c(0,0), lwd=1)
+
+# text on top of each bar
+text(x = score_plot2, 
+     y = bartopText.y,
+     pos = 1,
+     offset = 0.2,
+     labels = paste0("TM= ",bardt$total_minute,"\n","TLM= ", bardt$n_lapsing_minute), 
+     cex = 0.6)  
+
+# xaxis label
+axis(side=1, at = score_plot2, labels = c("0-0.9", "1-1.9", "2-2.9", "3-3.9","4-4.9", "5-5.9","6-6.9","7-7.9","8+"),
+     cex.axis = 0.8)
+
+
+
+@
+
+
+
+
+
+
+
+
+\clearpage
+
+\section{Video model with 8 session: A comparison with Visage\_SmartEye video model}
+
+
+
+
+<<session8_name, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE>>=
+
+sm_8ses_in <- c("20160817_020230_tm" ,  "20160819_0230_hz",
+                 "20160819_0300_tm", "20160819_0326_hz", "20160824_0200_sm", "20160824_0230_hz", "20160824_0300_sm","20160824_0330_hz")
+
+# model data 
+sm_8ses_mdt <- sm_mdt[sm_mdt$session %in% sm_8ses_in, ]
+
+# blink correct shape data
+sm_dt_8ses <- sm_dt_final[sm_dt_final$session %in% sm_8ses_in,]
+
+
+# 
+n_8ses_final <- length(sm_8ses_in)
+
+
+#write.csv(sm_dt_8ses, "C:/Research/optalert_oae_20170227/oae/research/R/Rproject/SmartEye_everything/smartEye_video_JDSModel/SmartEye_NFT50_blink_obs.csv", row.names=FALSE)
+
+
+
+
+@
+
+
+<<session8_print, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, results='text'>>=
+print(sm_8ses_in)
+
+@
+
+
+
+<<combine_plot_8ses, cache=TRUE ,echo=FALSE, warning = FALSE, message=FALSE, fig.align='center', fig.show='asis', fig.height = 10>>=
+
+################# common x & y limit for not_impaired and drowsy data ##################
+
+cx <- range(sm_dt_8ses$maxvel)
+cy <- range(sm_dt_8ses$maxamp)
+
+
+######################## not_impaired data plot ##################
+sm_gl_dt <- sm_dt_8ses[sm_dt_8ses$device == "Glasses",]
+sm_gl_dt$type <- factor(sm_gl_dt$type, level = c("1","-1"))
+
+sm_gl_plot <-  ggplot(data=sm_gl_dt, aes(x=maxvel, y =maxamp)) +
+        geom_point(color = "blue", shape=21) + 
+        scale_x_continuous(limits = c(0, 1700)) + 
+        scale_y_continuous(limits= c(0,1700)) + 
+        facet_wrap(~ state+ type,  labeller = label_both )  +
+        stat_smooth(method = "lm", col="red") +  
+        ggtitle("Device: Glasses \nRelationship between Amplitude and Velocity (8 sessions combined)") +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+        
+
+##################### slope ,correlation ##################
+sm_gl_stat1 <- 
+  sm_gl_dt %>%
+  group_by(state, type) %>%
+  do(mod1 = lm(maxamp~maxvel, data = .), 
+     mod2 = cor(.$maxamp, .$maxvel, method = "pearson"),
+     mod3 = nrow(.)) %>%
+  mutate(n_events = mod3[[1]],
+         slope = round(summary(mod1)$coeff[2],3), 
+         correlation = round(mod2[1],3)) %>%
+       select(-mod1, -mod2, -mod3) %>%
+       arrange(type)
+
+
+#### mean & sd of avr #######################
+sm_gl_stat2 <- 
+  sm_gl_dt %>%
+  group_by(state, type) %>%
+  summarise(mean_avr = round(mean(avr),3), 
+            sd_avr = round(sd(avr),3)) %>% 
+  arrange(type)
+
+### combine stat file #####################
+sm_gl_stat3 <- data.frame("device" = "Glasses", right_join(sm_gl_stat1, sm_gl_stat2, by=c("state","type")) )
+
+################ alert stat plot #########################
+
+tabdt <- data.frame(x=c(0,1),y=c(0,1))
+sm_gl_stat_plot <- ggplot(data=tabdt, aes(x=x,y=y))+
+               geom_blank()+
+               annotation_custom(tableGrob( sm_gl_stat3, rows =NULL, theme = ttheme_default(base_size = 11)), 
+                                  xmin=0, xmax=1, ymin=0, ymax=1)+
+                ggtitle("Device: Glasses \nSummary measures (8 sessions combined)") +
+                theme_bw() +
+                theme(legend.position = "none",
+                      axis.title.x=element_blank(),
+                      axis.text.x=element_blank(),
+                      axis.ticks.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks.y=element_blank(),
+                      panel.background = element_blank(),
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank(),
+                       plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+
+
+
+############### alert: histogram of AVR ##################
+
+gl_avr_hist <- ggplot(data = sm_gl_dt, aes(x=avr)) + 
+  geom_histogram(colour="darkblue", fill = "lightblue", binwidth = 0.5) +
+  scale_x_continuous(limits=c(0,6), breaks = seq(0,6, 0.5)) + 
+   xlab("AVR") +
+  ylab("No. of blinks")+
+  facet_wrap(~ state+ type,labeller = label_both) +
+  theme_bw()+
+  theme(legend.position = "none",
+          plot.title = element_text(size=14, hjust = 0.5, face="bold")) +
+  ggtitle("Histogram of AVR (8 sessions combined): \nGlasses")
+
+
+
+
+##############################  drowsy data ###################################   
+   
+sm_sm_dt <- sm_dt_8ses[sm_dt_8ses$device == "SmartEye",]
+sm_sm_dt$type <- factor(sm_sm_dt$type, level = c("1","-1"))
+
+sm_sm_plot <-  ggplot(data=sm_sm_dt, aes(x=maxvel, y =maxamp)) +
+   scale_x_continuous(limits = c(0, 1500)) + 
+        scale_y_continuous(limits= c(0,1500)) + 
+        geom_point(color = "blue", shape=21) + 
+        facet_wrap(~ state+ type,  labeller = label_both )  +
+        stat_smooth(method = "lm", col="red") + 
+        ggtitle("Device: SmartEye \nRelationship between Amplitude and Velocity (8 sessions combined)") +
+        theme_bw() +
+        theme( plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+        
+
+##################### slope ,correlation ##################
+sm_sm_stat1 <- 
+  sm_sm_dt %>%
+  group_by(state, type) %>%
+  do(mod1 = lm(maxamp~maxvel, data = .), 
+     mod2 = cor(.$maxamp, .$maxvel, method = "pearson"),
+     mod3 = nrow(.)) %>%
+  mutate(n_events = round(mod3[[1]],3),
+         slope = round(summary(mod1)$coeff[2],3), 
+         correlation = round(mod2[1],3)) %>%
+      select(-mod1, -mod2, -mod3) %>%
+       arrange(type)
+
+
+#### mean & sd of avr #######################
+sm_sm_stat2 <- 
+  sm_sm_dt %>%
+  group_by(state, type) %>%
+  summarise(mean_avr = round(mean(avr), 3),
+            sd_avr = round(sd(avr),3)) %>% 
+  arrange(type)
+
+### combine stat file #####################
+sm_sm_stat3 <- data.frame("device" = "SmartEye", right_join(sm_sm_stat1, sm_sm_stat2, by=c("state","type")) )
+
+################ sm stat plot #########################
+
+
+tabdt <- data.frame(x=c(0,1),y=c(0,1))
+   sm_sm_stat_plot <- ggplot(data=tabdt, aes(x=x,y=y))+
+               geom_blank()+
+               annotation_custom(tableGrob( sm_sm_stat3, rows =NULL, theme = ttheme_default(base_size = 11)), 
+                                  xmin=0, xmax=1, ymin=0, ymax=1)+
+                ggtitle("Summary measures (8 sessions combined): SmartEye") +
+                theme_bw() +
+                theme(legend.position = "none",
+                      axis.title.x=element_blank(),
+                      axis.text.x=element_blank(),
+                      axis.ticks.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks.y=element_blank(),
+                      panel.background = element_blank(),
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank(),
+                       plot.title = element_text(size=14, hjust = 0.5, face="bold"))
+
+  
+
+############### sm: histigram of AVR ##################
+
+sm_avr_hist <- ggplot(data = sm_sm_dt, aes(x=avr)) + 
+  geom_histogram(colour="darkblue", fill = "lightblue", binwidth = 0.5) +
+  scale_x_continuous(limits=c(0,6), breaks = seq(0,6, 0.5)) + 
+   xlab("AVR") +
+  ylab("No. of blinks")+
+  facet_wrap(~ state+ type,labeller = label_both) +
+  theme_bw()+
+  theme(legend.position = "none",
+          plot.title = element_text(size=14, hjust = 0.5, face="bold")) +
+  ggtitle("Histogram of AVR (8 sessions combined) \nDevice: SmartEye")
+
+   
+    
+   
+############ scatter plot #################   
+grid.arrange(sm_gl_plot, sm_gl_stat_plot,
+             ncol=1,
+             heights = c(7,3))
+
+   
+   
+############## table plot ###############
+grid.arrange(sm_sm_plot, sm_sm_stat_plot,
+             ncol=1,
+             heights = c(7,3))
+
+############ historam of AVR plot #################   
+grid.arrange(gl_avr_hist , sm_avr_hist ,
+             ncol=1,
+             heights = c(5,5)) 
+
+
+@
+
+
+
+
+The distribution of state20min is
+
+<<state_2min_table, cache=TRUE ,echo=FALSE, results='asis'>>=
+
+print(xtable(t(table(sm_8ses_mdt$state20min)),
+             auto=TRUE,
+             caption = "Distribution of classes using JTV_percentage_20min"),
+      booktabs = TRUE,
+      include.rownames = FALSE)
+
+@
+
+
+
+
+
+<<smarteye_videomodel_2, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE>>=
+################# fit a  model with state20min #################
+# jdsa full model
+state20min_full_mod_8ses <- ols(state20min_imf, data= sm_8ses_mdt)
+
+
+# check if there is multicollinearity issue/ offending variables exits. 
+# The offending variables coeffcients are not estimating and dropped from analysis
+  if(any(is.na(state20min_full_mod_8ses$coefficients))==TRUE){
+    # model with non-offending  predictors
+    state20min_imf_new_8ses <- formula(paste0(state20min_dep_var, "~", 
+                                         paste0(names(state20min_full_mod_8ses$coefficients[!is.na(state20min_full_mod_8ses$coefficients)])[-1], collapse="+")))
+    # fit new full model after dropping offending variables 
+    state20min_full_mod_new_8ses <- ols(state20min_imf_new_8ses, data=sm_8ses_mdt) 
+  } else{
+  # if no offending variables exists use the full.mod
+    state20min_imf_new_8ses <- state20min_imf
+    state20min_full_mod_new_8ses <- state20min_full_mod_8ses
+  }
+  # Perform backward elimination for model persimony	
+  state20min_step_mod_8ses <- fastbw(state20min_full_mod_new_8ses, rule='p', type='individual', sls=0.05) 
+  # final model formula
+  state20min_imf_final_8ses <- formula(paste0(state20min_dep_var, "~", paste0(state20min_step_mod_8ses$names.kept, collapse="+")))
+  # final model after variable selection /backward elimination
+  state20min_final_mod_8ses <- ols(state20min_imf_final_8ses, data=sm_8ses_mdt)
+
+############ calculate JDS Raw ###############
+# calculate jds values
+sm_8ses_mdt$state20min_8ses_jds <- predict(state20min_final_mod_8ses, data = sm_8ses_mdt)  
+  
+# truncate to have values in between 0 (values <0 to 0) and 10 (values > 10 to 10)
+sm_8ses_mdt$state20min_8ses_jds[sm_8ses_mdt$state20min_8ses_jds <= 0] <- 0
+sm_8ses_mdt$state20min_8ses_jds[sm_8ses_mdt$state20min_8ses_jds >= 10] <- 10
+
+
+
+
+@
+
+
+<<state20min_final_model_8ses_print, cache=TRUE ,echo=FALSE, results='text'>>=
+
+  print(state20min_final_mod_8ses)
+  
+@
+
+
+
+<<state20_jds_8ses_plot, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show='asis', fig.height=7>>=
+
+
+plot_dt <- sm_8ses_mdt[,c("session","state20min","state20min_jds")]
+plot_dt$fcolor <- ifelse(plot_dt$state20min_jds >5, "tomato", ifelse(plot_dt$state20min_jds < 4.5, "green", "yellow"))
+plot_dt$fcolor <- factor(plot_dt$fcolor, levels  = c("green","yellow","tomato"))
+
+state20min_jds_plot <- ggplot(data= plot_dt, aes(x=state20min_jds, fill = fcolor)) +
+  geom_histogram(breaks = seq(0,10,0.5), colour="grey",binwidth = 0.5)+
+   scale_fill_manual(values = c("green","yellow","tomato")) +
+  xlab("Raw JDS score")+
+  facet_wrap(~ state20min,labeller = label_both, ncol=1) +
+  theme_bw()+
+  theme(legend.position = "none",
+        strip.text = element_text(size=14),
+          plot.title = element_text(size=14, hjust = 0.5, face="bold")) +
+  ggtitle(paste0("Raw JDS from ",model_device, " (", n_8ses_final, " sessions combined)\n
+          impaired state = JTV_percentage_20min > 5%"))
+
+state20min_jds_plot
+
+
+@
+
+
+
+\subsubsection{Model with number of lapses using 8 sessions}
+
+<<video_nlapses_allocation_8ses, cache=TRUE ,echo=FALSE, warning=FALSE, message=FALSE>>=
+
+sm_8ses_mdt$statelapse <- NA   
+
+sm_8ses_mdt$statelapse[sm_8ses_mdt$state20min =="not_impaired" & sm_8ses_mdt$lapsing_minute =="no"] <-  "not_impaired_not_lapsing"
+sm_8ses_mdt$statelapse[sm_8ses_mdt$state20min =="not_impaired" & sm_8ses_mdt$lapsing_minute =="yes"] <-  "not_impaired_lapsing"
+sm_8ses_mdt$statelapse[sm_8ses_mdt$state20min =="impaired" & sm_8ses_mdt$lapsing_minute =="no"] <-  "impaired_not_lapsing"
+sm_8ses_mdt$statelapse[sm_8ses_mdt$state20min =="impaired" & sm_8ses_mdt$lapsing_minute =="yes"] <-  "impaired_lapsing"
+
+sm_8ses_mdt$statelapse <- factor(sm_8ses_mdt$statelapse, levels =c("not_impaired_not_lapsing", "not_impaired_lapsing","impaired_not_lapsing","impaired_lapsing"))
+
+# statelapse code: alert = -1 and drowsy = 8
+sm_8ses_mdt$statelapse_code <- 100
+sm_8ses_mdt$statelapse_code[sm_8ses_mdt$statelapse =="not_impaired_not_lapsing"] <- -1
+sm_8ses_mdt$statelapse_code[sm_8ses_mdt$statelapse =="impaired_lapsing"] <- 9
+
+####### subset data to have only statelapse_code 
+sm_8ses_mdt2 <- sm_8ses_mdt[sm_8ses_mdt$statelapse %in% c("not_impaired_not_lapsing","impaired_lapsing"),] 
+
+@
+
+
+The distribution of these two classes are
+
+<<state_lapsing_table_8ses, cache=TRUE ,echo=FALSE, results='asis'>>=
+
+print(xtable(table(sm_8ses_mdt$state20min,sm_8ses_mdt$lapsing_minute),
+             auto=TRUE,
+             caption = "Distribution of classes using JTV\\_percentage\\_20min and lapsing\\_minute"),
+      booktabs = TRUE,
+      include.rownames = TRUE)
+
+@
+
+
+
+<<video_jdsmodel_nlapses_8ses, cache=TRUE ,echo=FALSE, warning=FALSE, message=FALSE>>=
+
+
+####################### forward- backward variable selection ###################
+# jds original model formula
+statelapses_imf <- formula(paste0('statelapse_code',"~", paste0(indep_var, collapse = "+")))
+
+# jdsa full model
+statelapses_full_mod <- ols(statelapses_imf, data= sm_8ses_mdt2)
+
+# extract dependent variable from formula
+statelapses_dep_var <- all.vars(update(statelapses_imf,.~0))
+
+# check if there is multicollinearity issue/ offending variables exits. 
+# The offending variables coeffcients are not estimating and dropped from analysis
+  if(any(is.na(statelapses_full_mod$coefficients))==TRUE){
+    # model with non-offending  predictors
+    statelapses_imf_new <- formula(paste0(statelapses_dep_var, "~", 
+                                         paste0(names(statelapses_full_mod$coefficients[!is.na(statelapses_full_mod$coefficients)])[-1], collapse="+")))
+    # fit new full model after dropping offending variables 
+    statelapses_full_mod_new <- ols(statelapses_imf_new, data=sm_8ses_mdt2) 
+  } else{
+  # if no offending variables exists use the full.mod
+    statelapses_imf_new <- statelapses_imf
+    statelapses_full_mod_new <- statelapses_full_mod
+  }
+  # Perform backward elimination for model persimony	
+  statelapses_step_mod <- fastbw(statelapses_full_mod_new, rule='p', type='individual', sls=0.05) 
+  # final model formula
+  statelapses_imf_final <- formula(paste0(statelapses_dep_var, "~", paste0(statelapses_step_mod$names.kept, collapse="+")))
+  # final model after variable selection /backward elimination
+  statelapses_final_mod <- ols(statelapses_imf_final, data=sm_8ses_mdt2)
+
+
+# calculate jds values
+sm_8ses_mdt$statelapse_jds <- predict(statelapses_final_mod, newdata=sm_8ses_mdt)  
+  
+# truncate to have values in between 0 (values <0 to 0) and 10 (values > 10 to 10)
+sm_8ses_mdt$statelapse_jds[sm_8ses_mdt$statelapse_jds <= 0] <- 0
+sm_8ses_mdt$statelapse_jds[sm_8ses_mdt$statelapse_jds >= 10] <- 10
+
+
+
+#write.csv(sm_8ses_mdt, "C:/Research/optalert_oae_20170227/oae/research/R/Rproject/SmartEye_everything/smartEye_video_JDSModel/SmartEye_NFT50_perminute_obs.csv", row.names=FALSE)
+
+
+@
+
+
+<<statelapses_final_model_print_8ses, cache=TRUE ,echo=FALSE, results='text'>>=
+
+  print(statelapses_final_mod)
+  
+@
+
+
+
+
+<<statelapses_jds_plot_8ses, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show='asis', fig.height=7>>=
+ 
+plot_dt <- sm_8ses_mdt[,c("session","state20min","lapsing_minute", "statelapse_jds")]
+plot_dt$fcolor <- ifelse(plot_dt$statelapse_jds >5, "tomato", ifelse(plot_dt$statelapse_jds < 4.5, "green", "yellow"))
+plot_dt$fcolor <- factor(plot_dt$fcolor, levels  = c("green","yellow","tomato"))
+
+statelapses_jds_plot <- ggplot(data= plot_dt, aes(x=statelapse_jds, fill = fcolor)) +
+  geom_histogram(breaks = seq(0,10,0.5), colour="grey",binwidth = 0.5)+
+   scale_fill_manual(values = c("green","yellow","tomato")) +
+  xlab("Raw JDS score")+
+  facet_wrap(~  state20min+lapsing_minute,labeller = label_both) +
+  theme_bw()+
+  theme(legend.position = "none",
+        strip.text = element_text(size=12),
+          plot.title = element_text(size=12, hjust = 0.5, face="bold")) +
+  ggtitle(paste0("Raw JDS from ",model_device, " (", n_8ses_final, " sessions combined)\n
+       Model with number of lapses within JTV_percentage_20min"))
+
+statelapses_jds_plot
+
+@
+
+
+
+
+
+<<risk_per_minute_plot_all_8ses, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show= 'asis', fig.align='center', fig.height = 6>>=
+
+#bin predicted JDS score in binwidth of 
+bin_low <- seq(0,9,1)
+bin_up <- c(seq(0.9,8.9,1),10) 
+
+# classify them according to the bin
+sm_8ses_mdt$statelapsejds_bin <- cut(round(sm_8ses_mdt$statelapse_jds,1), breaks = c(0,bin_up), right = TRUE, include.lowest = TRUE)
+sm_8ses_mdt$statelapsejds_bin_name <- factor(sm_8ses_mdt$statelapsejds_bin , labels = c(1:10))
+
+# calculate percentage of minute with at least one lapse that falls within each score group 
+# relative risk?? 
+
+rr_jds <- 
+  sm_8ses_mdt %>%
+  group_by(statelapsejds_bin_name) %>%
+  summarise(total_minute = length(n_lapses),
+            n_lapsing_minute = sum(n_lapses> 0)) %>%
+  mutate(lapsing_minute_perc = round(100*n_lapsing_minute/total_minute, 1))
+
+#################################################################################
+# bar plot of percentage of lasping minute that falls wihtin each score group
+
+# draw a box width = 2.64 and height = 2.01
+# plot(x = seq(0, 12,length.out = 17),
+#      y = seq(0, 80, by=5), 
+#      ylab = "Holes searched before target",
+#      xlab = "",
+#      axes = FALSE,
+#      type="n")
+
+# bar data
+bardt <- rr_jds
+
+# calculate top of each bar to print text
+bartopText.y <-bardt$lapsing_minute_perc + 5
+
+score_plot1 <- barplot(height=bardt$lapsing_minute_perc, 
+               ylim = c(0,80),
+               col = c("green", "green","green", "green","yellow","tomato", "tomato","tomato","tomato","tomato"),
+               xlab = "Raw JDS score",
+               ylab = "% minute with at least one lapse",
+               main = paste0("Validation of JDS score from ", model_device, "(", n_8ses_final, " sessions) \n (TM = Total minute; TLM = Total lapsing minute)"),
+               font.main = 1,
+               cex.main=0.8)
+
+# x-axis line. lwd controls width of the line. 
+lines(x=c(-0.5,length(bardt)+3), y=c(0,0), lwd=1)
+
+# text on top of each bar
+text(x = score_plot1, 
+     y = bartopText.y,
+     pos = 1,
+     offset = 0.2,
+     labels = paste0("TM= ",bardt$total_minute,"\n","TLM= ", bardt$n_lapsing_minute), 
+     cex = 0.6)  
+
+# xaxis label
+axis(side=1, at = score_plot1, labels = c("0-0.9", "1-1.9", "2-2.9", "3-3.9","4-4.9", "5-5.9","6-6.9","7-7.9","8-8.9","9-10"),
+     cex.axis = 0.8)
+
+
+@
+
+\vspace{0.5cm}
+
+
+<<risk_per_minute_plot_lessgroup_8ses, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, fig.show= 'asis', fig.align='center', fig.height = 4.5, eval=FALSE>>=
+
+# Combine last three group together
+
+rr_jds_8plus <- 
+  rr_jds %>%
+  filter(statelapsejds_bin_name %in% c(9,10)) %>%
+  summarize(total_minute = sum(total_minute),
+            n_lapsing_minute = sum(n_lapsing_minute)) %>%
+  mutate(lapsing_minute_perc =round(100*n_lapsing_minute/total_minute,1))
+
+rr_jds_8plus <-   data.frame(statelapsejds_bin_name ="8+", rr_jds_8plus)
+
+rr_jds_comb <- rbind(rr_jds[rr_jds$statelapsejds_bin_name %in% c(1:8),],  rr_jds_8plus)
+
+
+# bar data
+bardt <- rr_jds_comb
+
+# calculate top of each bar to print text
+bartopText.y <-bardt$lapsing_minute_perc + 7
+
+score_plot2 <- barplot(height=bardt$lapsing_minute_perc, 
+               ylim = c(0,80),
+               col = c("green", "green","green", "green","yellow","tomato", "tomato","tomato","tomato","tomato"),
+               xlab = "Raw JDS score",
+               ylab = "% minute with at least one lapse",
+               main = paste0("Validation of JDS score from ", model_device, "\n (TM = Total minute; TLM = Total lapsing minute)"),
+               font.main = 1)
+
+# x-axis line. lwd controls width of the line. 
+lines(x=c(-0.5,length(bardt)+3), y=c(0,0), lwd=1)
+
+# text on top of each bar
+text(x = score_plot2, 
+     y = bartopText.y,
+     pos = 1,
+     offset = 0.2,
+     labels = paste0("TM= ",bardt$total_minute,"\n","TLM= ", bardt$n_lapsing_minute), 
+     cex = 0.6)  
+
+# xaxis label
+axis(side=1, at = score_plot2, labels = c("0-0.9", "1-1.9", "2-2.9", "3-3.9","4-4.9", "5-5.9","6-6.9","7-7.9","8+"),
+     cex.axis = 0.8)
+
+
+
+@
+
+
+
+
+<<data_checking, cache=TRUE ,echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE>>=
+
+# subject wise observaions in sm_8ses_mdt
+sm_8ses_perminute_obs_subject <- 
+  sm_8ses_mdt %>%
+  group_by(session) %>%
+  summarise(usable_observations = length(window))
+
+
+
+@
+
+\section{Conclusion}
+
+The SmartEye image processing on SmartEye recorded video provide better video modelling. The model with JTV\_percentage\_20min and number of lapses better results compared to the model based on JTV\_percentage\_20min only. 
+
+
+\end{document}
